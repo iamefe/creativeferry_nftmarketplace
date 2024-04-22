@@ -104,3 +104,15 @@ https://github.com/foundry-rs/foundry/issues/new/choose
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 @openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
 ```
+
+### Code formatting
+
+```shell
+"solidity.formatter": "prettier",
+  "workbench.sideBar.location": "right",
+#   "solidity.compileUsingRemoteVersion": "v0.8.20+commit.a1b79de6",
+  "[solidity]": {
+    "editor.defaultFormatter": "JuanBlanco.solidity",
+    "editor.formatOnSave": true
+  }
+```
