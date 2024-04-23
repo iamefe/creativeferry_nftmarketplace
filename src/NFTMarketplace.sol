@@ -4,8 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/CountersUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 
@@ -23,9 +22,6 @@ contract NFTMarketplace is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable
 {
-    using CountersUpgradeable for CountersUpgradeable.Counter;
-    CountersUpgradeable.Counter private _tokenIdCounter;
-
     /**
      * @dev Struct representing an NFT in the marketplace.
      * @param tokenId The unique identifier of the NFT.
@@ -50,11 +46,14 @@ contract NFTMarketplace is
         string metadataURI;
     }
 
-    // Arrays to store listed NFTs
-    NFT[] public nfts;
+    // Mapping to store NFTs by token ID
+    mapping(uint256 => NFT) private _nfts;
 
     // Mapping to keep track of existing tokens
     mapping(uint256 => bool) private _tokenExists;
+
+    // Mapping to keep track of used metadataURIs
+    mapping(string => bool) private _usedMetadataURIs;
 
     // Mappings to store NFTs by keyword and owner
     mapping(string => uint256[]) public nftsByKeyword;
@@ -89,6 +88,9 @@ contract NFTMarketplace is
         uint256 amount
     );
 
+    // Custom token ID counter
+    uint256 private _tokenIdCounter;
+
     /**
      * @dev Initializes the contract by setting the token name, symbol, and owner.
      */
@@ -105,7 +107,7 @@ contract NFTMarketplace is
      * @param price_in_ether The sale price of the NFT in Wei.
      * @param keywords An array of keywords associated with the NFT.
      * @param royaltyPercentage The percentage of the sale price to be paid as royalty.
-     * @param royaltyRecipient The address to receive the royalty payment. This address is assigned by the NFT creator and continue to receive royalties in perpertuity for all secondary sales of their work.
+     * @param royaltyRecipient The address to receive the royalty payment. This address is assigned by the NFT creator and continues to receive royalties in perpertuity for all secondary sales of their work.
      * @param metadataURI The URI pointing to the metadata of the NFT on IPFS.
      */
     function listNFT(
@@ -117,33 +119,33 @@ contract NFTMarketplace is
         address payable royaltyRecipient,
         string memory metadataURI
     ) public onlyOwner {
-        uint256 tokenId = _tokenIdCounter.current();
-        // Increment the token counter
-        _tokenIdCounter.increment();
+        uint256 tokenId = _tokenIdCounter;
+        _tokenIdCounter++;
 
         // Convert the price from Ether to Wei
         uint256 price_in_wei = price_in_ether * 1 ether;
 
-        // Create the NFT struct
-        NFT memory newNFT = NFT(
-            tokenId,
-            payable(msg.sender),
-            name,
-            description,
-            price_in_wei,
-            false,
-            royaltyPercentage,
-            royaltyRecipient,
-            metadataURI
-        );
+        // Check if the metadata URI is already used
+        require(!_usedMetadataURIs[metadataURI], "Metadata URI already in use");
 
-        nfts.push(newNFT);
+        // Create the NFT struct
+        NFT storage newNFT = _nfts[tokenId];
+        newNFT.tokenId = tokenId;
+        newNFT.owner = payable(msg.sender);
+        newNFT.name = name;
+        newNFT.description = description;
+        newNFT.price_in_wei = price_in_wei;
+        newNFT.isSold = false;
+        newNFT.royaltyPercentage = royaltyPercentage;
+        newNFT.royaltyRecipient = royaltyRecipient;
+        newNFT.metadataURI = metadataURI;
 
         // Update mappings
         _tokenExists[tokenId] = true;
         for (uint256 i = 0; i < keywords.length; i++) {
             nftsByKeyword[keywords[i]].push(tokenId); // Update the mapping for each keyword
         }
+
         nftsByOwner[msg.sender].push(tokenId);
 
         // Mint the NFT to the seller
@@ -151,6 +153,9 @@ contract NFTMarketplace is
 
         // Set token URI for IPFS integration
         _setTokenURI(tokenId, metadataURI);
+
+        // Mark the metadataURI as used
+        _usedMetadataURIs[metadataURI] = true;
 
         // Emit the NFTListed event
         emit NFTListed(
@@ -163,7 +168,13 @@ contract NFTMarketplace is
         );
     }
 
-    function listNFTForSale(uint256 tokenId, uint256 _price_in_ether) public {
+    /**
+     * @dev Lists a new NFT on the marketplace.
+     * @param _price_in_ether The sale price of the NFT in Wei which could be the same as the original price or a new price.
+     * @param tokenId The token ID of the NFT to be relisted.
+     */
+    function reListNFTForSale(uint256 tokenId, uint256 _price_in_ether) public {
+        require(_tokenExists[tokenId], "NFT does not exist.");
         require(
             ownerOf(tokenId) == msg.sender,
             "Only the owner can list the NFT for sale"
@@ -171,6 +182,18 @@ contract NFTMarketplace is
         require(_price_in_ether > 0, "Price must be greater than zero");
 
         setNewNFTPrice(tokenId, _price_in_ether);
+
+        _nfts[tokenId].isSold = false;
+
+        // Emit the NFTListed event
+        emit NFTListed(
+            tokenId,
+            msg.sender,
+            _nfts[tokenId].name,
+            _nfts[tokenId].description,
+            _price_in_ether,
+            _nfts[tokenId].metadataURI
+        );
     }
 
     /**
@@ -189,7 +212,7 @@ contract NFTMarketplace is
      */
     function getNFTIsSold(uint256 tokenId) public view returns (bool) {
         require(_tokenExists[tokenId], "NFT does not exist.");
-        return nfts[tokenId].isSold;
+        return _nfts[tokenId].isSold;
     }
 
     /**
@@ -197,8 +220,11 @@ contract NFTMarketplace is
      * @param tokenId The unique identifier of the NFT to be purchased.
      */
     function buyNFT(uint256 tokenId) public payable nonReentrant {
+        // Check NFT existence
+        require(_tokenExists[tokenId], "NFT does not exist.");
+
         // Retrieve the NFT struct
-        NFT storage nft = nfts[tokenId];
+        NFT storage nft = _nfts[tokenId];
 
         // Ensure the NFT is not already sold
         require(!nft.isSold, "NFT is already sold.");
@@ -210,8 +236,7 @@ contract NFTMarketplace is
         require(msg.value >= nft.price_in_wei, "Not enough Ether provided.");
 
         // Calculate the royalty amount
-        uint256 royaltyAmount = (nft.price_in_wei * nft.royaltyPercentage) /
-            100;
+        uint256 royaltyAmount = (msg.value * nft.royaltyPercentage) / 100;
 
         // Transfer the NFT ownership
         address payable oldOwner = nft.owner;
@@ -227,7 +252,7 @@ contract NFTMarketplace is
         }
 
         // Emit the NFTBought and NFTTransferred events
-        emit NFTBought(tokenId, msg.sender, oldOwner, nft.price_in_wei);
+        emit NFTBought(tokenId, msg.sender, oldOwner, msg.value);
         emit NFTTransferred(tokenId, oldOwner, msg.sender);
     }
 
@@ -247,31 +272,32 @@ contract NFTMarketplace is
      * @return An array of NFT structs representing the listed NFTs.
      */
     function getAllListedNFTs() public view returns (NFT[] memory) {
-        // Count the number of listed NFTs
         uint256 listedNFTsCount = 0;
-        for (uint256 i = 0; i < nfts.length; i++) {
-            if (!nfts[i].isSold) {
+        uint256[] memory listedTokenIds = new uint256[](_tokenIdCounter);
+        uint256 index = 0;
+
+        for (uint256 i = 0; i < _tokenIdCounter; i++) {
+            if (!_nfts[i].isSold) {
+                listedTokenIds[index] = i;
+                index++;
                 listedNFTsCount++;
             }
         }
 
-        // Create a new array to store the listed NFTs
         NFT[] memory listedNFTs = new NFT[](listedNFTsCount);
-        uint256 index = 0;
-
-        // Iterate over the nfts array and add listed NFTs to the listedNFTs array
-        for (uint256 i = 0; i < nfts.length; i++) {
-            if (!nfts[i].isSold) {
-                listedNFTs[index] = nfts[i];
-                index++;
-            }
+        for (uint256 i = 0; i < listedNFTsCount; i++) {
+            listedNFTs[i] = _nfts[listedTokenIds[i]];
         }
 
-        // Return the array of listed NFTs
         return listedNFTs;
     }
 
-    function setNewNFTPrice(uint256 tokenId, uint256 newPrice) public {
+    /**
+     * @dev Edits the price of an NFT.
+     * @param tokenId The token ID of the NFT to be edited.
+     * @param newPriceInEther The new price of the NFT in Ether.
+     */
+    function setNewNFTPrice(uint256 tokenId, uint256 newPriceInEther) public {
         require(
             _tokenExists[tokenId],
             "ERC721Metadata: URI query for nonexistent token"
@@ -281,11 +307,14 @@ contract NFTMarketplace is
             "Only the owner can update the price"
         );
 
-        nfts[tokenId].price_in_wei = newPrice;
+        // Convert the new price from Ether to Wei
+        uint256 newPriceInWei = newPriceInEther * 1 ether;
+
+        _nfts[tokenId].price_in_wei = newPriceInWei;
     }
 
     /**
-     * @dev Retrieves the NFTs tokenIds owned by a specific address.
+     * @dev Retrieves the NFTs' tokenIds owned by a specific address.
      * @param owner The address of the owner.
      * @return An array of token IDs owned by the given address.
      */
@@ -307,7 +336,7 @@ contract NFTMarketplace is
         NFT[] memory nftsArray = new NFT[](tokenIds.length);
 
         for (uint256 i = 0; i < tokenIds.length; i++) {
-            nftsArray[i] = getNFTbyId(tokenIds[i]);
+            nftsArray[i] = _nfts[tokenIds[i]];
         }
 
         return nftsArray;
@@ -319,7 +348,9 @@ contract NFTMarketplace is
      * @return The NFT struct for the given token ID.
      */
     function getNFTbyId(uint256 tokenId) public view returns (NFT memory) {
-        return nfts[tokenId];
+        require(_tokenExists[tokenId], "NFT does not exist.");
+
+        return _nfts[tokenId];
     }
 
     /**
@@ -364,7 +395,7 @@ contract NFTMarketplace is
         );
 
         // Retrieve the NFT struct
-        NFT storage nft = nfts[tokenId];
+        NFT storage nft = _nfts[tokenId];
 
         // Encode the metadata as a JSON string
         string memory json = Base64.encode(
@@ -405,7 +436,7 @@ contract NFTMarketplace is
         string[] memory names,
         string[] memory descriptions,
         uint256[] memory prices,
-        string[][] memory keywords, // Change this to a two-dimensional array
+        string[][] memory keywords, // [[Keyoword 1, Keyword 2], [Keyword 3, Keyword 4]]
         uint8[] memory royaltyPercentages,
         address payable[] memory royaltyRecipients,
         string[] memory metadataURIs
@@ -425,7 +456,7 @@ contract NFTMarketplace is
                 names[i],
                 descriptions[i],
                 prices[i],
-                keywords[i], // Pass the array of keywords for this NFT
+                keywords[i],
                 royaltyPercentages[i],
                 royaltyRecipients[i],
                 metadataURIs[i]
@@ -443,10 +474,20 @@ contract NFTMarketplace is
         uint256 totalPrice = 0;
         for (uint256 i = 0; i < tokenIds.length; i++) {
             uint256 tokenId = tokenIds[i];
-            NFT storage nft = nfts[tokenId];
+
+            // Check NFT existence
+            require(
+                _tokenExists[tokenId],
+                "One or more NFTs requested do not exist."
+            );
+
+            NFT storage nft = _nfts[tokenId];
 
             // Ensure the NFT is not already sold
             require(!nft.isSold, "NFT is already sold.");
+
+            // Ensure the buyer is not the owner of the NFT
+            require(nft.owner != msg.sender, "Cannot buy your own NFT.");
 
             // Calculate the total price
             totalPrice += nft.price_in_wei;
@@ -457,11 +498,10 @@ contract NFTMarketplace is
 
         for (uint256 i = 0; i < tokenIds.length; i++) {
             uint256 tokenId = tokenIds[i];
-            NFT storage nft = nfts[tokenId];
+            NFT storage nft = _nfts[tokenId];
 
             // Calculate the royalty amount
-            uint256 royaltyAmount = (nft.price_in_wei * nft.royaltyPercentage) /
-                100;
+            uint256 royaltyAmount = (msg.value * nft.royaltyPercentage) / 100;
 
             // Transfer the NFT ownership
             address payable oldOwner = nft.owner;
@@ -470,14 +510,14 @@ contract NFTMarketplace is
             _transfer(oldOwner, msg.sender, tokenId);
 
             // Transfer funds to the seller and royalty recipient
-            oldOwner.transfer(nft.price_in_wei - royaltyAmount);
+            oldOwner.transfer(msg.value - royaltyAmount);
             if (royaltyAmount > 0) {
                 nft.royaltyRecipient.transfer(royaltyAmount);
                 emit RoyaltyPaid(tokenId, nft.royaltyRecipient, royaltyAmount);
             }
 
             // Emit the NFTBought and NFTTransferred events
-            emit NFTBought(tokenId, msg.sender, oldOwner, nft.price_in_wei);
+            emit NFTBought(tokenId, msg.sender, oldOwner, msg.value);
             emit NFTTransferred(tokenId, oldOwner, msg.sender);
         }
     }

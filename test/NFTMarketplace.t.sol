@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../NFTMarketplace.sol";
+import "../src/NFTMarketplace.sol";
 
 contract NFTMarketplaceTest is Test {
     NFTMarketplace public marketplace;
@@ -69,15 +69,16 @@ contract NFTMarketplaceTest is Test {
         );
         vm.stopPrank();
 
-        assertEq(marketplace.nfts().length, 1);
-        assertEq(marketplace.nfts()[0].name, name);
-        assertEq(marketplace.nfts()[0].description, description);
-        assertEq(marketplace.nfts()[0].price_in_wei, price * 1 ether);
-        assertEq(marketplace.nfts()[0].royaltyPercentage, royaltyPercentage);
-        assertEq(marketplace.nfts()[0].royaltyRecipient, royaltyRecipient);
-        assertEq(marketplace.nfts()[0].metadataURI, metadataURI);
-        assertEq(marketplace.nftsByKeyword("test")[0], 0);
-        assertEq(marketplace.nftsByOwner(owner)[0], 0);
+        assertEq(marketplace.tokenExists(0), true);
+        NFTMarketplace.NFT memory nft = marketplace.getNFTbyId(0);
+        assertEq(nft.name, name);
+        assertEq(nft.description, description);
+        assertEq(nft.price_in_wei, price * 1 ether);
+        assertEq(nft.royaltyPercentage, royaltyPercentage);
+        assertEq(nft.royaltyRecipient, royaltyRecipient);
+        assertEq(nft.metadataURI, metadataURI);
+        assertEq(marketplace.nftsByKeyword("test", 0), 0);
+        assertEq(marketplace.nftsByOwner(owner, 0), 0);
         assertEq(marketplace.ownerOf(0), owner);
     }
 
@@ -86,31 +87,39 @@ contract NFTMarketplaceTest is Test {
 
         vm.startPrank(buyer, buyer);
         vm.expectEmit(true, true, true, true);
-        emit NFTBought(0, buyer, owner, marketplace.nfts()[0].price_in_wei);
+        emit NFTBought(0, buyer, owner, marketplace.getNFTbyId(0).price_in_wei);
         vm.expectEmit(true, true, true, true);
         emit NFTTransferred(0, owner, buyer);
         vm.expectEmit(true, true, true, true);
         emit RoyaltyPaid(
             0,
             royaltyRecipient,
-            (marketplace.nfts()[0].price_in_wei * 10) / 100
+            (marketplace.getNFTbyId(0).price_in_wei * 10) / 100
         );
 
-        marketplace.buyNFT{value: marketplace.nfts()[0].price_in_wei}(0);
+        marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei}(0);
         vm.stopPrank();
 
-        assertEq(marketplace.nfts()[0].owner, buyer);
-        assertEq(marketplace.nfts()[0].isSold, true);
+        NFTMarketplace.NFT memory nft = marketplace.getNFTbyId(0);
+        assertEq(nft.owner, buyer);
+        assertEq(nft.isSold, true);
         assertEq(marketplace.ownerOf(0), buyer);
-        assertEq(buyer.balance, 100 ether - marketplace.nfts()[0].price_in_wei);
-        assertEq(
-            owner.balance,
-            100 ether - (marketplace.nfts()[0].price_in_wei * 90) / 100
-        );
-        assertEq(
-            royaltyRecipient.balance,
-            (marketplace.nfts()[0].price_in_wei * 10) / 100
-        );
+        assertEq(buyer.balance, 100 ether - nft.price_in_wei);
+        assertEq(owner.balance, 100 ether - (nft.price_in_wei * 90) / 100);
+        assertEq(royaltyRecipient.balance, (nft.price_in_wei * 10) / 100);
+    }
+
+    function testReListNFTForSale() public {
+        testBuyNFT();
+
+        vm.startPrank(buyer);
+        uint256 newPrice = 2 ether;
+        marketplace.reListNFTForSale(0, newPrice);
+        vm.stopPrank();
+
+        NFTMarketplace.NFT memory nft = marketplace.getNFTbyId(0);
+        assertEq(nft.price_in_wei, newPrice * 1 ether);
+        assertEq(nft.isSold, false);
     }
 
     function testBulkListNFTs() public {
@@ -156,29 +165,26 @@ contract NFTMarketplaceTest is Test {
         );
         vm.stopPrank();
 
-        assertEq(marketplace.nfts().length, 2);
-        assertEq(marketplace.nfts()[0].name, names[0]);
-        assertEq(marketplace.nfts()[1].name, names[1]);
-        assertEq(marketplace.nfts()[0].description, descriptions[0]);
-        assertEq(marketplace.nfts()[1].description, descriptions[1]);
-        assertEq(marketplace.nfts()[0].price_in_wei, prices[0] * 1 ether);
-        assertEq(marketplace.nfts()[1].price_in_wei, prices[1] * 1 ether);
-        assertEq(
-            marketplace.nfts()[0].royaltyPercentage,
-            royaltyPercentages[0]
-        );
-        assertEq(
-            marketplace.nfts()[1].royaltyPercentage,
-            royaltyPercentages[1]
-        );
-        assertEq(marketplace.nfts()[0].royaltyRecipient, royaltyRecipients[0]);
-        assertEq(marketplace.nfts()[1].royaltyRecipient, royaltyRecipients[1]);
-        assertEq(marketplace.nfts()[0].metadataURI, metadataURIs[0]);
-        assertEq(marketplace.nfts()[1].metadataURI, metadataURIs[1]);
-        assertEq(marketplace.nftsByKeyword("test1")[0], 0);
-        assertEq(marketplace.nftsByKeyword("test2")[0], 1);
-        assertEq(marketplace.nftsByOwner(owner)[0], 0);
-        assertEq(marketplace.nftsByOwner(owner)[1], 1);
+        assertEq(marketplace.tokenExists(0), true);
+        assertEq(marketplace.tokenExists(1), true);
+        NFTMarketplace.NFT memory nft1 = marketplace.getNFTbyId(0);
+        NFTMarketplace.NFT memory nft2 = marketplace.getNFTbyId(1);
+        assertEq(nft1.name, names[0]);
+        assertEq(nft2.name, names[1]);
+        assertEq(nft1.description, descriptions[0]);
+        assertEq(nft2.description, descriptions[1]);
+        assertEq(nft1.price_in_wei, prices[0] * 1 ether);
+        assertEq(nft2.price_in_wei, prices[1] * 1 ether);
+        assertEq(nft1.royaltyPercentage, royaltyPercentages[0]);
+        assertEq(nft2.royaltyPercentage, royaltyPercentages[1]);
+        assertEq(nft1.royaltyRecipient, royaltyRecipients[0]);
+        assertEq(nft2.royaltyRecipient, royaltyRecipients[1]);
+        assertEq(nft1.metadataURI, metadataURIs[0]);
+        assertEq(nft2.metadataURI, metadataURIs[1]);
+        assertEq(marketplace.nftsByKeyword("test1", 0), 0);
+        assertEq(marketplace.nftsByKeyword("test2", 0), 1);
+        assertEq(marketplace.nftsByOwner(owner, 0), 0);
+        assertEq(marketplace.nftsByOwner(owner, 1), 1);
         assertEq(marketplace.ownerOf(0), owner);
         assertEq(marketplace.ownerOf(1), owner);
     }
@@ -190,22 +196,22 @@ contract NFTMarketplaceTest is Test {
         tokenIds[0] = 0;
         tokenIds[1] = 1;
 
-        uint256 totalPrice = marketplace.nfts()[0].price_in_wei +
-            marketplace.nfts()[1].price_in_wei;
-        uint256 royaltyAmount1 = (marketplace.nfts()[0].price_in_wei *
-            marketplace.nfts()[0].royaltyPercentage) / 100;
-        uint256 royaltyAmount2 = (marketplace.nfts()[1].price_in_wei *
-            marketplace.nfts()[1].royaltyPercentage) / 100;
+        uint256 totalPrice = marketplace.getNFTbyId(0).price_in_wei +
+            marketplace.getNFTbyId(1).price_in_wei;
+        uint256 royaltyAmount1 = (marketplace.getNFTbyId(0).price_in_wei *
+            marketplace.getNFTbyId(0).royaltyPercentage) / 100;
+        uint256 royaltyAmount2 = (marketplace.getNFTbyId(1).price_in_wei *
+            marketplace.getNFTbyId(1).royaltyPercentage) / 100;
 
         vm.startPrank(buyer, buyer);
         vm.expectEmit(true, true, true, true);
-        emit NFTBought(0, buyer, owner, marketplace.nfts()[0].price_in_wei);
+        emit NFTBought(0, buyer, owner, marketplace.getNFTbyId(0).price_in_wei);
         vm.expectEmit(true, true, true, true);
         emit NFTTransferred(0, owner, buyer);
         vm.expectEmit(true, true, true, true);
         emit RoyaltyPaid(0, royaltyRecipient, royaltyAmount1);
         vm.expectEmit(true, true, true, true);
-        emit NFTBought(1, buyer, owner, marketplace.nfts()[1].price_in_wei);
+        emit NFTBought(1, buyer, owner, marketplace.getNFTbyId(1).price_in_wei);
         vm.expectEmit(true, true, true, true);
         emit NFTTransferred(1, owner, buyer);
         vm.expectEmit(true, true, true, true);
@@ -214,10 +220,12 @@ contract NFTMarketplaceTest is Test {
         marketplace.bulkBuyNFTs{value: totalPrice}(tokenIds);
         vm.stopPrank();
 
-        assertEq(marketplace.nfts()[0].owner, buyer);
-        assertEq(marketplace.nfts()[0].isSold, true);
-        assertEq(marketplace.nfts()[1].owner, buyer);
-        assertEq(marketplace.nfts()[1].isSold, true);
+        NFTMarketplace.NFT memory nft1 = marketplace.getNFTbyId(0);
+        NFTMarketplace.NFT memory nft2 = marketplace.getNFTbyId(1);
+        assertEq(nft1.owner, buyer);
+        assertEq(nft1.isSold, true);
+        assertEq(nft2.owner, buyer);
+        assertEq(nft2.isSold, true);
         assertEq(marketplace.ownerOf(0), buyer);
         assertEq(marketplace.ownerOf(1), buyer);
         assertEq(buyer.balance, 100 ether - totalPrice);
@@ -230,11 +238,15 @@ contract NFTMarketplaceTest is Test {
 
     function testTokenURI() public {
         testListNFT();
-        assertEq(marketplace.tokenURI(0), marketplace.nfts()[0].metadataURI);
+        assertEq(
+            marketplace.tokenURI(0),
+            marketplace.getNFTbyId(0).metadataURI
+        );
     }
 
     function testTokenURIBase64() public {
         testListNFT();
+        NFTMarketplace.NFT memory nft = marketplace.getNFTbyId(0);
         string memory expectedBase64URI = string(
             abi.encodePacked(
                 "data:application/json;base64,",
@@ -243,11 +255,11 @@ contract NFTMarketplaceTest is Test {
                         string(
                             abi.encodePacked(
                                 '{"name": "',
-                                marketplace.nfts()[0].name,
+                                nft.name,
                                 '", "description": "',
-                                marketplace.nfts()[0].description,
+                                nft.description,
                                 '", "image": "',
-                                marketplace.nfts()[0].metadataURI,
+                                nft.metadataURI,
                                 '"}'
                             )
                         )
@@ -274,13 +286,15 @@ contract NFTMarketplaceTest is Test {
     function testFailBuyOwnNFT() public {
         testListNFT();
         vm.prank(owner);
-        marketplace.buyNFT{value: marketplace.nfts()[0].price_in_wei}(0);
+        marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei}(0);
     }
 
     function testFailBuyInsufficientEther() public {
         testListNFT();
         vm.prank(buyer);
-        marketplace.buyNFT{value: marketplace.nfts()[0].price_in_wei - 1}(0);
+        marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei - 1}(
+            0
+        );
     }
 
     function testFailBuyNonExistentNFT() public {
@@ -291,7 +305,7 @@ contract NFTMarketplaceTest is Test {
     function testFailBuyAlreadySoldNFT() public {
         testBuyNFT();
         vm.prank(buyer);
-        marketplace.buyNFT{value: marketplace.nfts()[0].price_in_wei}(0);
+        marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei}(0);
     }
 
     function testFailBulkBuyInsufficientEther() public {
@@ -299,9 +313,48 @@ contract NFTMarketplaceTest is Test {
         uint256[] memory tokenIds = new uint256[](2);
         tokenIds[0] = 0;
         tokenIds[1] = 1;
-        uint256 totalPrice = marketplace.nfts()[0].price_in_wei +
-            marketplace.nfts()[1].price_in_wei;
+        uint256 totalPrice = marketplace.getNFTbyId(0).price_in_wei +
+            marketplace.getNFTbyId(1).price_in_wei;
         vm.prank(buyer);
         marketplace.bulkBuyNFTs{value: totalPrice - 1}(tokenIds);
+    }
+
+    function testGetAllListedNFTs() public {
+        testBulkListNFTs();
+
+        NFTMarketplace.NFT[] memory listedNFTs = marketplace.getAllListedNFTs();
+        assertEq(listedNFTs.length, 2);
+        assertEq(listedNFTs[0].owner, owner); // Corrected line
+        assertEq(listedNFTs[1].owner, owner); // Corrected line
+    }
+
+    function testSetNewNFTPrice() public {
+        testListNFT();
+
+        vm.startPrank(owner);
+        uint256 newPrice = 2 ether;
+        marketplace.setNewNFTPrice(0, newPrice);
+        vm.stopPrank();
+
+        assertEq(marketplace.getNFTbyId(0).price_in_wei, newPrice * 1 ether);
+    }
+
+    function testGetNFTsByOwner() public {
+        testBulkListNFTs();
+
+        uint256[] memory ownerNFTs = marketplace.getNFTsByOwner(owner);
+        assertEq(ownerNFTs.length, 2);
+        assertEq(ownerNFTs[0], 0);
+        assertEq(ownerNFTs[1], 1);
+    }
+
+    function testGetDetailedNFTsByOwner() public {
+        testBulkListNFTs();
+
+        NFTMarketplace.NFT[] memory ownerNFTs = marketplace
+            .getDetailedNFTsByOwner(owner);
+        assertEq(ownerNFTs.length, 2);
+        assertEq(ownerNFTs[0].tokenId, 0);
+        assertEq(ownerNFTs[1].tokenId, 1);
     }
 }
