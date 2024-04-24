@@ -116,3 +116,15 @@ https://github.com/foundry-rs/foundry/issues/new/choose
     "editor.formatOnSave": true
   }
 ```
+
+### Address of contract on the Sepolia testnet:
+
+```shell
+0xdAfAE67401db66dbe591d2A400e987416133Df6F
+```
+
+### Deploying
+
+```shell
+$ forge script script/DeployNFTMarketplace.s.sol:DeployNFTMarketplace --rpc-url sepolia --broadcast
+```

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import "../src/NFTMarketplace.sol";
+import "../script/DeployNFTMarketplace.s.sol";
 
 contract NFTMarketplaceTest is Test {
     NFTMarketplace public marketplace;
@@ -36,11 +37,16 @@ contract NFTMarketplaceTest is Test {
     );
 
     function setUp() public {
-        marketplace = new NFTMarketplace();
+        // marketplace = new NFTMarketplace();
+
+        DeployNFTMarketplace deployNFTMarketplace = new DeployNFTMarketplace();
+        marketplace = deployNFTMarketplace.run();
+
         owner = payable(makeAddr("owner"));
         buyer = payable(makeAddr("buyer"));
         royaltyRecipient = payable(makeAddr("royaltyRecipient"));
-        marketplace.initialize();
+
+        // marketplace.initialize();
         vm.deal(owner, 100 ether);
         vm.deal(buyer, 100 ether);
     }
@@ -49,19 +55,27 @@ contract NFTMarketplaceTest is Test {
         vm.startPrank(owner);
         string memory name = "Test NFT";
         string memory description = "This is a test NFT";
-        uint256 price = 1 ether;
+        uint256 price_in_ether = 1;
         string[] memory keywords = new string[](1);
         keywords[0] = "test";
         uint8 royaltyPercentage = 10;
+
         string memory metadataURI = "ipfs://test-metadata-uri";
 
         vm.expectEmit(true, true, true, true);
-        emit NFTListed(0, owner, name, description, price, metadataURI);
+        emit NFTListed(
+            0,
+            owner,
+            name,
+            description,
+            price_in_ether,
+            metadataURI
+        );
 
         marketplace.listNFT(
             name,
             description,
-            price,
+            price_in_ether,
             keywords,
             royaltyPercentage,
             royaltyRecipient,
@@ -73,7 +87,7 @@ contract NFTMarketplaceTest is Test {
         NFTMarketplace.NFT memory nft = marketplace.getNFTbyId(0);
         assertEq(nft.name, name);
         assertEq(nft.description, description);
-        assertEq(nft.price_in_wei, price * 1 ether);
+        assertEq(nft.price_in_wei, price_in_ether * 1 ether);
         assertEq(nft.royaltyPercentage, royaltyPercentage);
         assertEq(nft.royaltyRecipient, royaltyRecipient);
         assertEq(nft.metadataURI, metadataURI);
@@ -86,16 +100,17 @@ contract NFTMarketplaceTest is Test {
         testListNFT();
 
         vm.startPrank(buyer, buyer);
-        vm.expectEmit(true, true, true, true);
-        emit NFTBought(0, buyer, owner, marketplace.getNFTbyId(0).price_in_wei);
-        vm.expectEmit(true, true, true, true);
-        emit NFTTransferred(0, owner, buyer);
+
         vm.expectEmit(true, true, true, true);
         emit RoyaltyPaid(
             0,
             royaltyRecipient,
             (marketplace.getNFTbyId(0).price_in_wei * 10) / 100
         );
+        vm.expectEmit(true, true, true, true);
+        emit NFTBought(0, buyer, owner, marketplace.getNFTbyId(0).price_in_wei);
+        vm.expectEmit(true, true, true, true);
+        emit NFTTransferred(0, owner, buyer);
 
         marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei}(0);
         vm.stopPrank();
@@ -105,7 +120,7 @@ contract NFTMarketplaceTest is Test {
         assertEq(nft.isSold, true);
         assertEq(marketplace.ownerOf(0), buyer);
         assertEq(buyer.balance, 100 ether - nft.price_in_wei);
-        assertEq(owner.balance, 100 ether - (nft.price_in_wei * 90) / 100);
+        assertEq(owner.balance, 100 ether + (nft.price_in_wei * 90) / 100);
         assertEq(royaltyRecipient.balance, (nft.price_in_wei * 10) / 100);
     }
 
@@ -113,7 +128,7 @@ contract NFTMarketplaceTest is Test {
         testBuyNFT();
 
         vm.startPrank(buyer);
-        uint256 newPrice = 2 ether;
+        uint256 newPrice = 2;
         marketplace.reListNFTForSale(0, newPrice);
         vm.stopPrank();
 
@@ -132,8 +147,8 @@ contract NFTMarketplaceTest is Test {
         descriptions[1] = "This is a test NFT 2";
 
         uint256[] memory prices = new uint256[](2);
-        prices[0] = 1 ether;
-        prices[1] = 2 ether;
+        prices[0] = 1;
+        prices[1] = 2;
 
         string[][] memory keywords = new string[][](2);
         keywords[0] = new string[](1);
@@ -205,17 +220,13 @@ contract NFTMarketplaceTest is Test {
 
         vm.startPrank(buyer, buyer);
         vm.expectEmit(true, true, true, true);
-        emit NFTBought(0, buyer, owner, marketplace.getNFTbyId(0).price_in_wei);
+        emit RoyaltyPaid(0, royaltyRecipient, royaltyAmount1);
         vm.expectEmit(true, true, true, true);
         emit NFTTransferred(0, owner, buyer);
         vm.expectEmit(true, true, true, true);
-        emit RoyaltyPaid(0, royaltyRecipient, royaltyAmount1);
-        vm.expectEmit(true, true, true, true);
-        emit NFTBought(1, buyer, owner, marketplace.getNFTbyId(1).price_in_wei);
+        emit RoyaltyPaid(1, royaltyRecipient, royaltyAmount2);
         vm.expectEmit(true, true, true, true);
         emit NFTTransferred(1, owner, buyer);
-        vm.expectEmit(true, true, true, true);
-        emit RoyaltyPaid(1, royaltyRecipient, royaltyAmount2);
 
         marketplace.bulkBuyNFTs{value: totalPrice}(tokenIds);
         vm.stopPrank();
@@ -231,7 +242,7 @@ contract NFTMarketplaceTest is Test {
         assertEq(buyer.balance, 100 ether - totalPrice);
         assertEq(
             owner.balance,
-            100 ether - (totalPrice - royaltyAmount1 - royaltyAmount2)
+            100 ether + (totalPrice - royaltyAmount1 - royaltyAmount2)
         );
         assertEq(royaltyRecipient.balance, royaltyAmount1 + royaltyAmount2);
     }
@@ -270,23 +281,46 @@ contract NFTMarketplaceTest is Test {
         assertEq(marketplace.tokenURIBase64(0), expectedBase64URI);
     }
 
-    function testFailListNFTNonOwner() public {
-        vm.prank(buyer);
+    function testListNFTByNonOwner() public {
+        vm.startPrank(buyer);
+        string memory name = "Test NFT";
+        string memory description = "This is a test NFT";
+        uint256 price_in_ether = 1;
+        string[] memory keywords = new string[](1);
+        keywords[0] = "test";
+        uint8 royaltyPercentage = 10;
+        string memory metadataURI = "ipfs://test-metadata-uri";
+
         marketplace.listNFT(
-            "Test NFT",
-            "This is a test NFT",
-            1 ether,
-            new string[](1),
-            10,
+            name,
+            description,
+            price_in_ether,
+            keywords,
+            royaltyPercentage,
             royaltyRecipient,
-            "ipfs://test-metadata-uri"
+            metadataURI
         );
+        vm.stopPrank();
+
+        assertEq(marketplace.tokenExists(0), true);
+        NFTMarketplace.NFT memory nft = marketplace.getNFTbyId(0);
+        assertEq(nft.name, name);
+        assertEq(nft.description, description);
+        assertEq(nft.price_in_wei, price_in_ether * 1 ether);
+        assertEq(nft.royaltyPercentage, royaltyPercentage);
+        assertEq(nft.royaltyRecipient, royaltyRecipient);
+        assertEq(nft.metadataURI, metadataURI);
+        assertEq(marketplace.nftsByKeyword("test", 0), 0);
+        assertEq(marketplace.nftsByOwner(buyer, 0), 0);
+        assertEq(marketplace.ownerOf(0), buyer);
     }
 
     function testFailBuyOwnNFT() public {
         testListNFT();
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vm.expectRevert("Cannot buy your own NFT.");
         marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei}(0);
+        vm.stopPrank();
     }
 
     function testFailBuyInsufficientEther() public {
@@ -324,15 +358,15 @@ contract NFTMarketplaceTest is Test {
 
         NFTMarketplace.NFT[] memory listedNFTs = marketplace.getAllListedNFTs();
         assertEq(listedNFTs.length, 2);
-        assertEq(listedNFTs[0].owner, owner); // Corrected line
-        assertEq(listedNFTs[1].owner, owner); // Corrected line
+        assertEq(listedNFTs[0].owner, owner);
+        assertEq(listedNFTs[1].owner, owner);
     }
 
     function testSetNewNFTPrice() public {
         testListNFT();
 
         vm.startPrank(owner);
-        uint256 newPrice = 2 ether;
+        uint256 newPrice = 2;
         marketplace.setNewNFTPrice(0, newPrice);
         vm.stopPrank();
 

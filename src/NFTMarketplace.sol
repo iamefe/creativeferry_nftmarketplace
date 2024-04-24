@@ -88,6 +88,7 @@ contract NFTMarketplace is
         uint256 amount
     );
 
+    // State variables
     // Custom token ID counter
     uint256 private _tokenIdCounter;
 
@@ -118,7 +119,7 @@ contract NFTMarketplace is
         uint8 royaltyPercentage,
         address payable royaltyRecipient,
         string memory metadataURI
-    ) public onlyOwner {
+    ) public {
         uint256 tokenId = _tokenIdCounter;
         _tokenIdCounter++;
 
@@ -440,7 +441,7 @@ contract NFTMarketplace is
         uint8[] memory royaltyPercentages,
         address payable[] memory royaltyRecipients,
         string[] memory metadataURIs
-    ) public onlyOwner {
+    ) public {
         require(
             names.length == descriptions.length &&
                 descriptions.length == prices.length &&
@@ -501,7 +502,8 @@ contract NFTMarketplace is
             NFT storage nft = _nfts[tokenId];
 
             // Calculate the royalty amount
-            uint256 royaltyAmount = (msg.value * nft.royaltyPercentage) / 100;
+            uint256 royaltyAmount = (nft.price_in_wei * nft.royaltyPercentage) /
+                100;
 
             // Transfer the NFT ownership
             address payable oldOwner = nft.owner;
@@ -510,14 +512,14 @@ contract NFTMarketplace is
             _transfer(oldOwner, msg.sender, tokenId);
 
             // Transfer funds to the seller and royalty recipient
-            oldOwner.transfer(msg.value - royaltyAmount);
+            oldOwner.transfer(nft.price_in_wei - royaltyAmount);
             if (royaltyAmount > 0) {
                 nft.royaltyRecipient.transfer(royaltyAmount);
                 emit RoyaltyPaid(tokenId, nft.royaltyRecipient, royaltyAmount);
             }
 
             // Emit the NFTBought and NFTTransferred events
-            emit NFTBought(tokenId, msg.sender, oldOwner, msg.value);
+            emit NFTBought(tokenId, msg.sender, oldOwner, totalPrice);
             emit NFTTransferred(tokenId, oldOwner, msg.sender);
         }
     }
