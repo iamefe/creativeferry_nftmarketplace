@@ -10,6 +10,7 @@ contract NFTMarketplaceTest is Test {
     address payable public owner;
     address payable public buyer;
     address payable public royaltyRecipient;
+    address payable public marketplaceOwner;
 
     event NFTListed(
         uint256 indexed tokenId,
@@ -35,18 +36,38 @@ contract NFTMarketplaceTest is Test {
         address indexed recipient,
         uint256 amount
     );
+    event CommissionPaid(
+        uint256 tokenId,
+        address indexed recipient,
+        uint256 amount
+    );
+
+    // function setUp() public {
+    //     marketplace = new NFTMarketplace();
+    //     owner = payable(makeAddr("owner"));
+    //     buyer = payable(makeAddr("buyer"));
+    //     royaltyRecipient = payable(makeAddr("royaltyRecipient"));
+
+    //     marketplace.initialize();
+
+    //     marketplaceOwner = payable(marketplace.owner());
+    //     // console.log(marketplaceOwner.balance);
+
+    //     vm.deal(owner, 100 ether);
+    //     vm.deal(buyer, 100 ether);
+    // }
 
     function setUp() public {
-        // marketplace = new NFTMarketplace();
-
         DeployNFTMarketplace deployNFTMarketplace = new DeployNFTMarketplace();
         marketplace = deployNFTMarketplace.run();
+
+        // console.log("Marketplace owner", marketplace.owner());
+        marketplaceOwner = payable(marketplace.owner());
+        // console.log(marketplaceOwner.balance);
 
         owner = payable(makeAddr("owner"));
         buyer = payable(makeAddr("buyer"));
         royaltyRecipient = payable(makeAddr("royaltyRecipient"));
-
-        // marketplace.initialize();
         vm.deal(owner, 100 ether);
         vm.deal(buyer, 100 ether);
     }
@@ -101,6 +122,11 @@ contract NFTMarketplaceTest is Test {
 
         vm.startPrank(buyer, buyer);
 
+        uint256 marketplaceOwnerbalanceBeforeSale = marketplaceOwner.balance;
+
+        uint256 commissionAmount = (marketplace.getNFTbyId(0).price_in_wei *
+            marketplace.commissionPercentage()) / 100;
+
         vm.expectEmit(true, true, true, true);
         emit RoyaltyPaid(
             0,
@@ -111,17 +137,36 @@ contract NFTMarketplaceTest is Test {
         emit NFTBought(0, buyer, owner, marketplace.getNFTbyId(0).price_in_wei);
         vm.expectEmit(true, true, true, true);
         emit NFTTransferred(0, owner, buyer);
+        vm.expectEmit(true, true, true, true);
+        emit CommissionPaid(0, marketplaceOwner, commissionAmount);
 
         marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei}(0);
+
         vm.stopPrank();
 
         NFTMarketplace.NFT memory nft = marketplace.getNFTbyId(0);
+        // console.log(
+        //     "Balance of royalty recipient after purchase",
+        //     (nft.price_in_wei * 10) / 100
+        // );
         assertEq(nft.owner, buyer);
         assertEq(nft.isSold, true);
         assertEq(marketplace.ownerOf(0), buyer);
         assertEq(buyer.balance, 100 ether - nft.price_in_wei);
-        assertEq(owner.balance, 100 ether + (nft.price_in_wei * 90) / 100);
-        assertEq(royaltyRecipient.balance, (nft.price_in_wei * 10) / 100);
+        assertEq(
+            owner.balance,
+            100 ether + (nft.price_in_wei * 90) / 100 - commissionAmount
+        );
+        assertEq(
+            royaltyRecipient.balance,
+            (nft.price_in_wei * 10) / 100,
+            "Royalty recipient should have a higher balance"
+        );
+        assertEq(
+            marketplaceOwner.balance,
+            (marketplaceOwnerbalanceBeforeSale + commissionAmount),
+            "Marketplace owner should have a higher balance"
+        );
     }
 
     function testReListNFTForSale() public {
@@ -217,6 +262,10 @@ contract NFTMarketplaceTest is Test {
             marketplace.getNFTbyId(0).royaltyPercentage) / 100;
         uint256 royaltyAmount2 = (marketplace.getNFTbyId(1).price_in_wei *
             marketplace.getNFTbyId(1).royaltyPercentage) / 100;
+        uint256 commissionAmount1 = (marketplace.getNFTbyId(0).price_in_wei *
+            marketplace.commissionPercentage()) / 100;
+        uint256 commissionAmount2 = (marketplace.getNFTbyId(1).price_in_wei *
+            marketplace.commissionPercentage()) / 100;
 
         vm.startPrank(buyer, buyer);
         vm.expectEmit(true, true, true, true);
@@ -242,7 +291,12 @@ contract NFTMarketplaceTest is Test {
         assertEq(buyer.balance, 100 ether - totalPrice);
         assertEq(
             owner.balance,
-            100 ether + (totalPrice - royaltyAmount1 - royaltyAmount2)
+            100 ether +
+                (totalPrice -
+                    royaltyAmount1 -
+                    royaltyAmount2 -
+                    commissionAmount1 -
+                    commissionAmount2)
         );
         assertEq(royaltyRecipient.balance, royaltyAmount1 + royaltyAmount2);
     }
@@ -390,5 +444,91 @@ contract NFTMarketplaceTest is Test {
         assertEq(ownerNFTs.length, 2);
         assertEq(ownerNFTs[0].tokenId, 0);
         assertEq(ownerNFTs[1].tokenId, 1);
+    }
+
+    // Commission tests
+
+    function testCommissionTransferForBuyNFT() public {
+        testListNFT();
+
+        uint256 initialOwnerBalance = marketplaceOwner.balance;
+
+        vm.startPrank(buyer, buyer);
+
+        vm.expectEmit(true, true, true, true);
+        emit RoyaltyPaid(
+            0,
+            royaltyRecipient,
+            (marketplace.getNFTbyId(0).price_in_wei * 10) / 100
+        );
+        vm.expectEmit(true, true, true, true);
+        emit NFTBought(0, buyer, owner, marketplace.getNFTbyId(0).price_in_wei);
+        vm.expectEmit(true, true, true, true);
+        emit NFTTransferred(0, owner, buyer);
+        vm.expectEmit(true, true, true, true);
+        emit CommissionPaid(
+            0,
+            marketplaceOwner,
+            (marketplace.getNFTbyId(0).price_in_wei * 2) / 100
+        );
+
+        marketplace.buyNFT{value: marketplace.getNFTbyId(0).price_in_wei}(0);
+        vm.stopPrank();
+
+        uint256 expectedCommission = (marketplace.getNFTbyId(0).price_in_wei *
+            2) / 100;
+        assertEq(
+            marketplaceOwner.balance,
+            initialOwnerBalance + expectedCommission
+        );
+    }
+
+    function testCommissionTransferForBulkBuyNFTs() public {
+        testBulkListNFTs();
+
+        uint256 initialOwnerBalance = marketplaceOwner.balance;
+
+        uint256[] memory tokenIds = new uint256[](2);
+        tokenIds[0] = 0;
+        tokenIds[1] = 1;
+
+        uint256 totalPrice = marketplace.getNFTbyId(0).price_in_wei +
+            marketplace.getNFTbyId(1).price_in_wei;
+        uint256 royaltyAmount1 = (marketplace.getNFTbyId(0).price_in_wei *
+            marketplace.getNFTbyId(0).royaltyPercentage) / 100;
+        uint256 royaltyAmount2 = (marketplace.getNFTbyId(1).price_in_wei *
+            marketplace.getNFTbyId(1).royaltyPercentage) / 100;
+        uint256 commissionAmount1 = (marketplace.getNFTbyId(0).price_in_wei *
+            marketplace.commissionPercentage()) / 100;
+        uint256 commissionAmount2 = (marketplace.getNFTbyId(1).price_in_wei *
+            marketplace.commissionPercentage()) / 100;
+
+        vm.startPrank(buyer, buyer);
+
+        vm.expectEmit(true, true, true, true);
+        emit RoyaltyPaid(0, royaltyRecipient, royaltyAmount1);
+
+        vm.expectEmit(true, true, true, true);
+        emit NFTTransferred(0, owner, buyer);
+
+        vm.expectEmit(true, true, true, true);
+        emit CommissionPaid(0, marketplaceOwner, commissionAmount1);
+
+        vm.expectEmit(true, true, true, true);
+        emit RoyaltyPaid(1, royaltyRecipient, royaltyAmount2);
+
+        vm.expectEmit(true, true, true, true);
+        emit NFTTransferred(1, owner, buyer);
+
+        vm.expectEmit(true, true, true, true);
+        emit CommissionPaid(1, marketplaceOwner, commissionAmount2);
+
+        marketplace.bulkBuyNFTs{value: totalPrice}(tokenIds);
+        vm.stopPrank();
+
+        assertEq(
+            marketplaceOwner.balance,
+            initialOwnerBalance + commissionAmount1 + commissionAmount2
+        );
     }
 }

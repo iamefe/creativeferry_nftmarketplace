@@ -12,6 +12,9 @@ import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 
+// Console.log
+import "forge-std/console.sol";
+
 /**
  * @title NFTMarketplace
  * @notice This contract implements an NFT marketplace with IPFS integration and various features for production-readiness.
@@ -45,6 +48,9 @@ contract NFTMarketplace is
         address payable royaltyRecipient;
         string metadataURI;
     }
+
+    // Commission percentage charged by the marketplace
+    uint8 public commissionPercentage;
 
     // Mapping to store NFTs by token ID
     mapping(uint256 => NFT) private _nfts;
@@ -87,6 +93,11 @@ contract NFTMarketplace is
         address indexed recipient,
         uint256 amount
     );
+    event CommissionPaid(
+        uint256 tokenId,
+        address indexed recipient,
+        uint256 amount
+    );
 
     // State variables
     // Custom token ID counter
@@ -98,6 +109,7 @@ contract NFTMarketplace is
     function initialize() public initializer {
         __ERC721_init("Creative Ferry NFT Marketplace", "CFNFTM");
         __Ownable_init(msg.sender);
+        commissionPercentage = 2; // Set the commission percentage to 2%
         __ReentrancyGuard_init();
     }
 
@@ -220,12 +232,19 @@ contract NFTMarketplace is
      * @dev Allows a buyer to purchase a listed NFT.
      * @param tokenId The unique identifier of the NFT to be purchased.
      */
+    /**
+     * @dev Allows a buyer to purchase a listed NFT.
+     * @param tokenId The unique identifier of the NFT to be purchased.
+     */
     function buyNFT(uint256 tokenId) public payable nonReentrant {
         // Check NFT existence
         require(_tokenExists[tokenId], "NFT does not exist.");
 
         // Retrieve the NFT struct
         NFT storage nft = _nfts[tokenId];
+
+        // Calculate commission amount
+        uint256 commissionAmount = (msg.value * commissionPercentage) / 100;
 
         // Ensure the NFT is not already sold
         require(!nft.isSold, "NFT is already sold.");
@@ -245,16 +264,27 @@ contract NFTMarketplace is
         nft.isSold = true;
         _transfer(oldOwner, msg.sender, tokenId);
 
-        // Transfer funds to the seller and royalty recipient
-        oldOwner.transfer(msg.value - royaltyAmount);
+        if (owner().balance > 0) {
+            console.log("Marketplace owner balance:", owner().balance);
+        } else {
+            console.log("Marketplace owner has no balance.");
+        }
+
+        // Transfer the commission to the marketplace owner
+        payable(owner()).transfer(commissionAmount);
+
+        // Transfer funds to the seller, royalty recipient, and marketplace owner
+        oldOwner.transfer(msg.value - royaltyAmount - commissionAmount);
+
         if (royaltyAmount > 0) {
             nft.royaltyRecipient.transfer(royaltyAmount);
             emit RoyaltyPaid(tokenId, nft.royaltyRecipient, royaltyAmount);
         }
 
-        // Emit the NFTBought and NFTTransferred events
+        // Emit the NFTBought, NFTTransferred and CommissionPaid events
         emit NFTBought(tokenId, msg.sender, oldOwner, msg.value);
         emit NFTTransferred(tokenId, oldOwner, msg.sender);
+        emit CommissionPaid(tokenId, owner(), commissionAmount);
     }
 
     /**
@@ -473,14 +503,12 @@ contract NFTMarketplace is
         uint256[] memory tokenIds
     ) public payable nonReentrant {
         uint256 totalPrice = 0;
+
         for (uint256 i = 0; i < tokenIds.length; i++) {
             uint256 tokenId = tokenIds[i];
 
             // Check NFT existence
-            require(
-                _tokenExists[tokenId],
-                "One or more NFTs requested do not exist."
-            );
+            require(_tokenExists[tokenId], "NFT does not exist.");
 
             NFT storage nft = _nfts[tokenId];
 
@@ -501,6 +529,10 @@ contract NFTMarketplace is
             uint256 tokenId = tokenIds[i];
             NFT storage nft = _nfts[tokenId];
 
+            // Calculate commission amount
+            uint256 commissionAmount = (nft.price_in_wei *
+                commissionPercentage) / 100;
+
             // Calculate the royalty amount
             uint256 royaltyAmount = (nft.price_in_wei * nft.royaltyPercentage) /
                 100;
@@ -511,16 +543,22 @@ contract NFTMarketplace is
             nft.isSold = true;
             _transfer(oldOwner, msg.sender, tokenId);
 
-            // Transfer funds to the seller and royalty recipient
-            oldOwner.transfer(nft.price_in_wei - royaltyAmount);
+            // Transfer funds to the seller, royalty recipient and marketplace owner
+            oldOwner.transfer(
+                nft.price_in_wei - royaltyAmount - commissionAmount
+            );
             if (royaltyAmount > 0) {
                 nft.royaltyRecipient.transfer(royaltyAmount);
                 emit RoyaltyPaid(tokenId, nft.royaltyRecipient, royaltyAmount);
             }
 
-            // Emit the NFTBought and NFTTransferred events
+            // Transfer the commission to the marketplace owner
+            payable(owner()).transfer(commissionAmount);
+
+            // Emit the NFTBought, NFTTransferred and CommissionPaid events
             emit NFTBought(tokenId, msg.sender, oldOwner, totalPrice);
             emit NFTTransferred(tokenId, oldOwner, msg.sender);
+            emit CommissionPaid(tokenId, owner(), commissionAmount);
         }
     }
 }
